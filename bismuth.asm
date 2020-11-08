@@ -7,17 +7,15 @@ msg:
     db 1024 dup 0
 ; And finally our program:
 program:
-    dd  bismuth ; We want to use our main interpreter, bismuth.
-    dd      data
-    dd          prog
-    dd              data
-    dd                  0x0a20202e
-    dd                  0x2e2e6948
-    dd              quote, eval, 0, pop
-    dd          quote, eval, 0
-    dd      0, quote, msg, copywords
-    dd      data, msg, eval, msg, eval, 0, output
-    dd  0
+    dd  bismuthint ; We want to use our main interpreter, bismuth.
+    dd      top, local, data
+    dd          dataint
+    dd              0x0a20202e
+    dd              0x2e2e6948
+    dd          endint, quote, eval, eval,
+    dd      end, eval, top, getlocal, sub, quote, msg, copywords
+    dd      top, local, msg, msg, top, getlocal, sub, output
+    dd  endint
 
 
 ; The input is in esi, pop dword from it:
@@ -32,26 +30,14 @@ program:
     add edi, 4
 %endmacro
 
-; Top of the stack is in edi, pop byte from it:
-%macro bispopbyte 1
-    mov %1, byte [edi]
-    inc edi
-%endmacro
-
 ; Top of the stack is in edi, push dword onto it:
 %macro bispush 1
     sub edi, 4
     mov dword [edi], %1
 %endmacro
 
-; Top of the stack is in edi, push byte onto it:
-%macro bispushbyte 1
-    dec edi
-    mov byte [edi], %1
-%endmacro
-
 ; Calling conventions for interpreters:
-%macro bisinterpret 1
+%macro biscall 1
     push esi
     mov esi, %1
     bisnext eax
@@ -71,36 +57,20 @@ _start:
     mov esi, program        ; We will read and execute program
     mov edi, stackbottom    ; and write results onto stack.
     bisnext eax             ; Read interpreter
-    bisinterpret eax        ; and start interpretation.
+    biscall eax             ; and start interpretation.
     ; After execution of program we will exit properly:
     mov ebx, 0              ; We have no error (error code = 0)
     mov eax, 1              ; and we want to exit.
     int 0x80                ; Send this to kernel.
     ; That's all! =)
 
-bismuth:
-    dd bismuth
+bismuthint:
+    dd bismuthint
     mov esi, [ebp+4]
 bismuthloop:
     bisnext eax
-    cmp eax, 0
-    je bismuthend
-    bisinterpret eax
+    biscall eax
     jmp bismuthloop
-bismuthend:
-    mov [ebp+4], esi
-    ret
-
-prog:
-    dd prog
-progloop:
-    bisnext eax
-    cmp eax, 0
-    je progend
-    bisinterpret eax
-    jmp progloop
-progend:
-    ret
 
 pop:
     dd pop
@@ -124,32 +94,61 @@ quote:
 
 eval:
     dd eval
-    mov esi, [ebp+4]
-    bispop eax
-    bisinterpret eax
-    mov [ebp+4], esi
-    ret
+    pop eax
+    pop ebp
+    pop esi
+    bispop ebx
+    push esi
+    mov esi, ebx
+    bisnext ebx
+    add ebx, 4
+    push ebp
+    mov ebp, esp
+    push eax
+    jmp ebx
 
 data:
     dd data
     mov esi, [ebp+4]
-    push edi
 dataloop:
     bisnext eax
     cmp eax, eval
     je dataeval
-    cmp eax, 0
-    je dataend
     bispush eax
     jmp dataloop
 dataeval:
-    bisinterpret eax
+    biscall eax
     jmp dataloop
-dataend:
-    pop eax
-    sub eax, edi
+
+dataint:
+    dd dataint
+dataintloop:
+    bisnext eax
+    cmp eax, eval
+    je datainteval
     bispush eax
+    jmp dataintloop
+datainteval:
+    biscall eax
+    jmp dataloop
+
+end:
+    dd end
+    mov esp, ebp
+    pop ebp
+    pop esi
+    mov esp, ebp
+    sub esp, 4
     mov [ebp+4], esi
+    ret
+
+endint:
+    dd endint
+    mov esp, ebp
+    pop ebp
+    pop esi
+    mov esp, ebp
+    sub esp, 4
     ret
 
 copywords:
@@ -172,4 +171,45 @@ output:
     mov eax, 4
     int 0x80
     add edi, edx
+    ret
+
+top:
+    dd top
+    mov eax, stackbottom
+    sub eax, edi
+    bispush eax
+    ret
+
+local:
+    dd local
+    pop eax
+    pop ebp
+    pop esi
+    bispop ebx
+    push ebx
+    push esi
+    push ebp
+    mov ebp, esp
+    push eax
+    ret
+
+getlocal:
+    dd getlocal
+    pop eax
+    pop ebp
+    pop esi
+    pop ebx
+    bispush ebx
+    push esi
+    push ebp
+    mov ebp, esp
+    push eax
+    ret
+
+sub:
+    dd sub
+    bispop ebx
+    bispop eax
+    sub eax, ebx
+    bispush eax
     ret
